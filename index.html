@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, orientation=landscape">
+    <meta name="theme-color" content="#131314">
+    
+    <title>Voicemeeter Monitor</title>
+    <!-- Tailwind für das Design -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-main: #131314;
+            --bg-card: #1e1f20;
+            --bg-item: #2b2c2f;
+            --text-primary: #e3e3e3;
+            --text-secondary: #8e918f;
+            --accent-blue: #a8c7fa;
+            --accent-gradient: linear-gradient(135deg, #7cacf8 0%, #cf93d9 100%);
+        }
+
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-primary);
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            touch-action: none;
+            overflow: hidden;
+        }
+        
+        /* MIXER STYLES */
+        .meter-container {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 4px;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.4);
+            position: relative;
+            overflow: hidden;
+            width: 100%;
+            border: 1px solid rgba(255,255,255,0.03);
+        }
+
+        .meter-fill {
+            height: 100%;
+            background: linear-gradient(to top, #4ade80 0%, #4ade80 83.3%, #facc15 83.3%, #facc15 91.6%, #f87171 91.6%, #f87171 100%);
+            border-radius: 8px;
+            clip-path: inset(100% 0 0 0); 
+            will-change: clip-path, box-shadow;
+            position: absolute;
+            bottom: 4px;
+            left: 0;
+            width: calc(100% - 8px);
+            margin: 0 4px;
+        }
+
+        .meter-fill.master {
+            background: linear-gradient(to top, #a8c7fa 0%, #a8c7fa 83.3%, #facc15 83.3%, #facc15 91.6%, #f87171 91.6%, #f87171 100%);
+        }
+
+        .meter-fill.is-muted {
+            background: #444746 !important;
+            box-shadow: none !important;
+        }
+
+        .mute-badge {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            background-color: #f87171;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            opacity: 0.15;
+            transition: all 0.2s ease;
+        }
+
+        .mute-badge.active {
+            opacity: 1;
+            box-shadow: 0 0 12px rgba(248, 113, 113, 0.4);
+        }
+
+        .meter-lines {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: repeating-linear-gradient(to bottom, transparent, transparent 8%, var(--bg-main) 8%, var(--bg-main) 8.5%);
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        @media (orientation: portrait) {
+            .portrait-warning { display: flex !important; }
+        }
+        
+        #blackout-screen {
+            background-color: #000000;
+            transition: opacity 0.5s ease;
+        }
+
+        /* Nahtlose Scroll-Animation (Marquee) */
+        @keyframes marquee-seamless {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(var(--scroll-dist)); }
+        }
+
+        /* Custom Input & Button Styling */
+        .gemini-input {
+            background-color: var(--bg-item);
+            border: none;
+            color: var(--text-primary);
+            transition: background-color 0.2s;
+        }
+        .gemini-input:focus {
+            background-color: #37393b;
+            outline: none;
+        }
+        .gemini-btn-primary {
+            background-color: var(--accent-blue);
+            color: #041e49;
+            transition: filter 0.2s;
+        }
+        .gemini-btn-primary:hover {
+            filter: brightness(1.1);
+        }
+        .gemini-btn-secondary {
+            background-color: transparent;
+            border: none;
+            color: var(--accent-blue);
+        }
+        .gemini-btn-secondary:hover {
+            background-color: rgba(168, 199, 250, 0.12);
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col p-3 md:p-5 relative">
+
+    <div id="blackout-screen" class="hidden absolute inset-0 z-[100] flex-col items-center justify-center cursor-pointer">
+        <div class="w-1.5 h-1.5 rounded-full bg-zinc-800 animate-pulse"></div>
+        <p class="text-[10px] text-zinc-700 mt-3 select-none tracking-widest">TAP TO WAKE</p>
+    </div>
+
+    <div class="portrait-warning hidden absolute inset-0 z-50 bg-[#131314] flex-col items-center justify-center text-center p-6 text-[#e3e3e3]">
+        <svg class="w-16 h-16 text-[#a8c7fa] mb-4 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+        <h2 class="text-xl font-medium mb-2">Bitte Gerät drehen</h2>
+        <p class="text-[#8e918f] text-sm">Die Oberfläche ist für das Querformat optimiert.</p>
+    </div>
+
+    <!-- Header / Status / TABS -->
+    <div class="flex justify-between items-center mb-4 shrink-0 cursor-pointer" id="header-bar">
+        <div class="flex items-center gap-4 w-1/4">
+            <h1 class="text-lg md:text-xl font-medium bg-clip-text text-transparent bg-gradient-to-r from-[#7cacf8] to-[#cf93d9]">VM Potato</h1>
+            <p id="status-text" class="text-[11px] text-[#8e918f] font-medium flex items-center gap-2 truncate">
+                <span class="w-1.5 h-1.5 rounded-full bg-[#8e918f] shrink-0"></span>
+                Standby
+            </p>
+        </div>
+
+        <!-- 3-Teilige Navigation Tab Pill -->
+        <div class="relative flex bg-[#1e1f20] rounded-full p-1 shadow-md w-64 md:w-[340px]" id="tab-container">
+            <div id="tab-slider" class="absolute top-1 bottom-1 left-[4px] w-[calc(33.333%-3px)] bg-[#2b2c2f] rounded-full transition-all duration-300 ease-out z-0"></div>
+            
+            <button id="tab-btn-mixer" class="relative flex-1 py-1.5 text-xs md:text-sm font-medium text-white transition-colors duration-300 z-10 rounded-full">
+                Mixer
+            </button>
+            <button id="tab-btn-media" class="relative flex-1 py-1.5 text-xs md:text-sm font-medium text-[#8e918f] hover:text-white transition-colors duration-300 z-10 rounded-full">
+                Media
+            </button>
+            <button id="tab-btn-home" class="relative flex-1 py-1.5 text-xs md:text-sm font-medium text-[#8e918f] hover:text-white transition-colors duration-300 z-10 rounded-full">
+                Home
+            </button>
+        </div>
+
+        <div class="flex gap-2 w-1/4 justify-end">
+            <button id="fullscreen-btn" class="gemini-btn-secondary p-2 rounded-full transition-colors" title="Vollbild">
+                <svg class="w-4 h-4 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Setup Panel -->
+    <div id="setup-panel" class="w-full flex gap-3 mb-4 shrink-0 bg-[#1e1f20] p-2 rounded-2xl shadow-lg transition-all duration-300">
+        <input type="text" id="ip-input" placeholder="PC IP Adresse" class="gemini-input flex-grow rounded-xl px-4 py-2 text-sm">
+        <button id="connect-btn" class="gemini-btn-primary px-6 py-2 rounded-xl text-sm font-semibold">
+            Verbinden
+        </button>
+    </div>
+
+    <!-- Main Content Container -->
+    <div class="flex flex-grow gap-2 md:gap-4 w-full h-full pb-2">
+        
+        <div class="flex flex-1 relative min-w-0">
+            
+            <!-- VIEW: MIXER -->
+            <div id="view-mixer" class="flex flex-1 justify-around gap-1.5 md:gap-3 w-full h-full">
+                <div class="flex flex-1 justify-around gap-1.5 md:gap-3" id="inputs-container"></div>
+            </div>
+
+            <!-- VIEW: MEDIA (Spotify etc.) -->
+            <div id="view-media" class="hidden flex-row flex-1 w-full h-full items-center justify-center gap-6 md:gap-12 px-2 md:px-4">
+                
+                <!-- Album Art -->
+                <div class="w-[32vw] max-w-[180px] md:max-w-[280px] aspect-square flex-shrink-0 rounded-[28px] shadow-2xl overflow-hidden bg-[#1e1f20] flex items-center justify-center border border-white/5 relative">
+                    <div id="media-art-glow" class="absolute inset-0 bg-[#a8c7fa]/5 blur-3xl transition-all duration-1000 hidden"></div>
+                    <img id="media-art" src="" class="w-full h-full object-cover hidden z-10 transition-opacity duration-500" />
+                    <div id="media-placeholder" class="text-[#444746] flex flex-col items-center gap-4 z-10">
+                        <svg class="w-14 h-14 opacity-40" fill="currentColor" viewBox="0 0 24 24"><path d="M21 3v12.5a5.5 5.5 0 1 1-2-4.22V6.5l-10 2v9.5a5.5 5.5 0 1 1-2-4.22v-11L21 3z"></path></svg>
+                    </div>
+                </div>
+                
+                <!-- Infos & Controls -->
+                <div class="flex flex-col justify-center flex-1 min-w-0 max-w-xl">
+                    
+                    <div class="mb-6 md:mb-8 w-full text-center">
+                        <div class="w-full overflow-hidden pb-1">
+                            <h2 id="media-title" class="text-2xl md:text-5xl font-medium text-[#e3e3e3] inline-block whitespace-nowrap">Kein Titel</h2>
+                        </div>
+                        <div class="w-full overflow-hidden mt-2">
+                            <h3 id="media-artist" class="text-sm md:text-xl text-[#8e918f] inline-block whitespace-nowrap font-normal"></h3>
+                        </div>
+                    </div>
+                    
+                    <!-- Progress Bar -->
+                    <div class="w-full mb-8 md:mb-10 flex flex-col gap-2">
+                        <div class="h-1.5 w-full bg-[#37393b] rounded-full overflow-hidden">
+                            <div id="media-progress-bar" class="h-full bg-[#a8c7fa] rounded-full" style="width: 0%"></div>
+                        </div>
+                        <div class="flex justify-between text-[11px] text-[#8e918f] font-mono tracking-tighter">
+                            <span id="media-time-current" data-sec="-1">0:00</span>
+                            <span id="media-time-total">0:00</span>
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center justify-center w-full gap-6 md:gap-10">
+                        <button id="btn-media-prev" class="text-[#e3e3e3] hover:text-[#a8c7fa] transition-colors active:scale-90">
+                            <svg class="w-7 h-7 md:w-10 md:h-10" fill="currentColor" viewBox="0 0 24 24"><path d="M18.75 5.653c0-.856-.917-1.398-1.667-.986l-11.54 6.347a1.125 1.125 0 0 0 0 1.972l11.54 6.347c.75.412 1.667-.13 1.667-.986V5.653Z"/><path d="M5.25 4.5a.75.75 0 0 0-.75.75v13.5a.75.75 0 0 0 1.5 0V5.25a.75.75 0 0 0-.75-.75Z"/></svg>
+                        </button>
+                        <button id="btn-media-play" class="w-16 h-16 md:w-20 md:h-20 flex items-center justify-center rounded-full bg-[#a8c7fa] text-[#041e49] shadow-xl active:scale-95 transition-all">
+                            <svg id="icon-play" class="w-8 h-8 md:w-10 md:h-10" fill="currentColor" viewBox="0 0 24 24"><path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>
+                            <svg id="icon-pause" class="w-8 h-8 md:w-10 md:h-10 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6.75 5.25a.75.75 0 0 1 .75-.75H9a.75.75 0 0 1 .75.75v13.5a.75.75 0 0 1-.75.75H7.5a.75.75 0 0 1-.75-.75V5.25Zm7.5 0A.75.75 0 0 1 15 4.5h1.5a.75.75 0 0 1 .75.75v13.5a.75.75 0 0 1-.75.75H15a.75.75 0 0 1-.75-.75V5.25Z"/></svg>
+                        </button>
+                        <button id="btn-media-next" class="text-[#e3e3e3] hover:text-[#a8c7fa] transition-colors active:scale-90">
+                            <svg class="w-7 h-7 md:w-10 md:h-10" fill="currentColor" viewBox="0 0 24 24"><path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/><path d="M18.75 4.5a.75.75 0 0 1 .75.75v13.5a.75.75 0 0 1-1.5 0V5.25a.75.75 0 0 1 .75-.75Z"/></svg>
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- VIEW: HOME ASSISTANT (NEU) -->
+            <!-- Hintergrund (bg-[#1e1f20]) und Rahmen (border) komplett entfernt für nahtlosen Look -->
+            <div id="view-home" class="hidden flex-1 w-full h-full rounded-2xl overflow-hidden relative">
+                <iframe id="ha-iframe" src="" class="absolute inset-0 w-full h-full border-none bg-transparent"></iframe>
+            </div>
+
+        </div>
+
+        <!-- Trenner -->
+        <div class="w-px bg-[#37393b] mx-1 md:mx-2 my-6 opacity-40 shrink-0"></div>
+
+        <!-- MASTER OUTPUT (Immer starr) -->
+        <div class="flex flex-col items-center w-full max-w-[44px] md:max-w-[70px] h-full shrink-0">
+            <div class="meter-container w-full">
+                <div class="meter-fill master shadow-[0_0_15px_rgba(168,199,250,0.1)]" id="meter-7"></div>
+                <div class="meter-lines"></div>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 mt-3 justify-center w-full">
+                <div class="mute-badge" id="mute-7">M</div>
+                <div class="font-bold text-[10px] md:text-[11px] text-[#a8c7fa] tracking-wider uppercase truncate w-full text-center" id="name-master">A1</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ====================================================
+        // KONFIGURATION: HOME ASSISTANT
+        // ====================================================
+        const HA_URL = "http://192.168.0.56:8123/mixer-panel?kiosk"; // HIER DEINE HOME ASSISTANT URL EINTRAGEN
+        // ====================================================
+
+        const inputsContainer = document.getElementById('inputs-container');
+        for (let i = 0; i < 7; i++) {
+            inputsContainer.innerHTML += `
+                <div class="flex flex-col items-center w-full max-w-[44px] md:max-w-[70px] h-full">
+                    <div class="meter-container w-full">
+                        <div class="meter-fill" id="meter-${i}"></div>
+                        <div class="meter-lines"></div>
+                    </div>
+                    <div class="flex flex-col items-center gap-1.5 mt-3 justify-center w-full">
+                        <div class="mute-badge" id="mute-${i}">M</div>
+                        <div class="font-medium text-[10px] md:text-[11px] text-[#8e918f] tracking-tight truncate w-full text-center" id="name-${i}">IN ${i+1}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        const noSleep = new NoSleep();
+        let ws = null;
+        let autoReconnect = false;
+        let reconnectTimeout = null;
+        let blackoutTimeout = null; 
+
+        let currentLevels = Array(8).fill(0);
+        let targetLevels = Array(8).fill(0);
+        let currentMutes = Array(8).fill(false);
+        let targetMutes = Array(8).fill(false);
+
+        let mediaPlaying = false;
+        let mediaCurrentTitle = "";
+        let mediaDuration = 0;
+        let localProgress = 0; 
+        let lastServerProgress = -1;
+        let lastRenderTime = performance.now();
+
+        const statusText = document.getElementById('status-text');
+        const setupPanel = document.getElementById('setup-panel');
+        const headerBar = document.getElementById('header-bar');
+        const blackoutScreen = document.getElementById('blackout-screen');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        
+        // Views
+        const viewMixer = document.getElementById('view-mixer');
+        const viewMedia = document.getElementById('view-media');
+        const viewHome = document.getElementById('view-home');
+        
+        // Tabs
+        const tabBtnMixer = document.getElementById('tab-btn-mixer');
+        const tabBtnMedia = document.getElementById('tab-btn-media');
+        const tabBtnHome = document.getElementById('tab-btn-home');
+        const tabSlider = document.getElementById('tab-slider');
+
+        // Home Assistant Iframe
+        document.getElementById('ha-iframe').src = HA_URL;
+
+        const mediaTitle = document.getElementById('media-title');
+        const mediaArtist = document.getElementById('media-artist');
+        const mediaArt = document.getElementById('media-art');
+        const mediaPlaceholder = document.getElementById('media-placeholder');
+        const mediaArtGlow = document.getElementById('media-art-glow');
+        const iconPlay = document.getElementById('icon-play');
+        const iconPause = document.getElementById('icon-pause');
+
+        // --- NEUE TAB LOGIK FÜR 3 TABS ---
+        function switchTab(activeTab) {
+            // Alle Views verstecken und Tabs auf inaktiv setzen
+            viewMixer.classList.add('hidden');
+            viewMedia.classList.add('hidden');
+            viewMedia.classList.remove('flex'); // Media hat spezielle Flex-Regeln
+            viewHome.classList.add('hidden');
+
+            tabBtnMixer.classList.replace('text-white', 'text-[#8e918f]');
+            tabBtnMedia.classList.replace('text-white', 'text-[#8e918f]');
+            tabBtnHome.classList.replace('text-white', 'text-[#8e918f]');
+
+            // Gewählten Tab aktivieren
+            if(activeTab === 'mixer') {
+                viewMixer.classList.remove('hidden');
+                tabBtnMixer.classList.replace('text-[#8e918f]', 'text-white');
+                tabSlider.style.left = '4px';
+            } else if(activeTab === 'media') {
+                viewMedia.classList.remove('hidden');
+                viewMedia.classList.add('flex');
+                tabBtnMedia.classList.replace('text-[#8e918f]', 'text-white');
+                tabSlider.style.left = 'calc(33.333% + 1px)';
+                
+                if(mediaCurrentTitle) { 
+                    checkTextScroll('media-title'); 
+                    checkTextScroll('media-artist'); 
+                }
+            } else if(activeTab === 'home') {
+                viewHome.classList.remove('hidden');
+                tabBtnHome.classList.replace('text-[#8e918f]', 'text-white');
+                tabSlider.style.left = 'calc(66.666% - 1px)';
+            }
+        }
+
+        tabBtnMixer.addEventListener('click', (e) => { e.stopPropagation(); switchTab('mixer'); });
+        tabBtnMedia.addEventListener('click', (e) => { e.stopPropagation(); switchTab('media'); });
+        tabBtnHome.addEventListener('click', (e) => { e.stopPropagation(); switchTab('home'); });
+
+        // --- Seamless Marquee Logic ---
+        function checkTextScroll(elementId) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const parent = el.parentElement;
+
+            el.style.animation = 'none';
+            el.style.transform = 'translateX(0)';
+
+            if (el.dataset.originalText) {
+                el.textContent = el.dataset.originalText;
+            } else {
+                el.dataset.originalText = el.textContent;
+            }
+
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    const diff = el.scrollWidth - parent.clientWidth;
+                    if (diff > 2) {
+                        const safeText = el.textContent.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                        
+                        el.innerHTML = `
+                            <span class="scroll-part inline-flex items-center">
+                                ${safeText} <span class="mx-6 md:mx-12 opacity-30 text-[0.6em]">●</span>
+                            </span>
+                            <span class="scroll-part inline-flex items-center">
+                                ${safeText} <span class="mx-6 md:mx-12 opacity-30 text-[0.6em]">●</span>
+                            </span>
+                        `;
+                        
+                        requestAnimationFrame(() => {
+                            const part = el.querySelector('.scroll-part');
+                            if(part) {
+                                const distance = part.offsetWidth;
+                                const duration = distance / 40; 
+                                el.style.setProperty('--scroll-dist', `-${distance}px`);
+                                el.style.animation = `marquee-seamless ${duration}s linear infinite`;
+                            }
+                        });
+                    }
+                });
+            });
+        }
+
+        window.addEventListener('resize', () => {
+            if(mediaCurrentTitle && !viewMedia.classList.contains('hidden')) {
+                checkTextScroll('media-title'); checkTextScroll('media-artist');
+            }
+        });
+
+        fullscreenBtn.addEventListener('click', (e) => {
+            e.stopPropagation(); 
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => console.log(err));
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        function toggleSetup(show) {
+            if(show) {
+                setupPanel.classList.remove('hidden'); setupPanel.classList.add('flex');
+            } else {
+                setupPanel.classList.add('hidden'); setupPanel.classList.remove('flex');
+            }
+        }
+
+        document.getElementById('tab-container').addEventListener('click', (e) => e.stopPropagation());
+        headerBar.addEventListener('click', () => toggleSetup(true));
+
+        blackoutScreen.addEventListener('click', () => {
+            autoReconnect = false;
+            clearTimeout(reconnectTimeout); clearTimeout(blackoutTimeout);
+            blackoutScreen.classList.add('hidden');
+            statusText.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-zinc-600"></span> Standby`;
+            toggleSetup(true);
+            noSleep.disable();
+        });
+
+        function formatTime(seconds) {
+            if (!seconds || isNaN(seconds)) return "0:00";
+            const m = Math.floor(seconds / 60);
+            const s = Math.floor(seconds % 60);
+            return `${m}:${s.toString().padStart(2, '0')}`;
+        }
+
+        function updateMediaUI(mediaData) {
+            if (!mediaData) return;
+            
+            if (mediaData.title !== undefined && mediaData.title !== mediaCurrentTitle) {
+                mediaCurrentTitle = mediaData.title;
+                
+                delete mediaTitle.dataset.originalText;
+                delete mediaArtist.dataset.originalText;
+
+                mediaTitle.textContent = mediaData.title || "Kein Titel";
+                mediaArtist.textContent = mediaData.artist || "";
+                
+                localProgress = 0; lastServerProgress = -1;
+                
+                if (!viewMedia.classList.contains('hidden')) { 
+                    checkTextScroll('media-title'); 
+                    checkTextScroll('media-artist'); 
+                }
+            }
+            
+            if (mediaData.duration !== undefined) {
+                mediaDuration = mediaData.duration;
+                document.getElementById('media-time-total').textContent = formatTime(mediaDuration);
+                if (mediaData.progress !== undefined && mediaData.progress !== lastServerProgress) {
+                    if (!mediaPlaying || Math.abs(mediaData.progress - localProgress) > 2) {
+                        localProgress = mediaData.progress;
+                        const percent = mediaDuration > 0 ? (localProgress / mediaDuration) * 100 : 0;
+                        document.getElementById('media-progress-bar').style.width = `${percent}%`;
+                        document.getElementById('media-time-current').textContent = formatTime(localProgress);
+                    }
+                    lastServerProgress = mediaData.progress;
+                }
+            }
+            if (mediaData.playing !== undefined && mediaData.playing !== mediaPlaying) {
+                mediaPlaying = mediaData.playing;
+                if (mediaPlaying) { iconPlay.classList.add('hidden'); iconPause.classList.remove('hidden'); }
+                else { iconPause.classList.add('hidden'); iconPlay.classList.remove('hidden'); }
+            }
+            if (mediaData.art !== undefined && mediaData.art !== null) {
+                if (mediaData.art !== "") {
+                    mediaArt.src = "data:image/jpeg;base64," + mediaData.art;
+                    mediaArt.classList.remove('hidden'); mediaArtGlow.classList.remove('hidden'); mediaPlaceholder.classList.add('hidden');
+                } else if (mediaData.title === "") {
+                    mediaArt.classList.add('hidden'); mediaArtGlow.classList.add('hidden'); mediaPlaceholder.classList.remove('hidden');
+                }
+            }
+        }
+
+        function renderLoop() {
+            const now = performance.now();
+            const deltaSec = (now - lastRenderTime) / 1000;
+            lastRenderTime = now;
+            if (mediaPlaying && mediaDuration > 0) {
+                localProgress += deltaSec;
+                if (localProgress > mediaDuration) localProgress = mediaDuration;
+                document.getElementById('media-progress-bar').style.width = `${(localProgress / mediaDuration) * 100}%`;
+                const currentSecond = Math.floor(localProgress);
+                const currElement = document.getElementById('media-time-current');
+                if (currElement.dataset.sec !== currentSecond.toString()) {
+                    currElement.textContent = formatTime(localProgress); currElement.dataset.sec = currentSecond;
+                }
+            }
+            let needsUpdate = false;
+            for (let i = 0; i < 8; i++) {
+                const diff = targetLevels[i] - currentLevels[i];
+                if (Math.abs(diff) > 0.5) { currentLevels[i] += diff > 0 ? diff * 0.8 : diff * 0.04; needsUpdate = true; }
+                else if (currentLevels[i] !== targetLevels[i]) { currentLevels[i] = targetLevels[i]; needsUpdate = true; }
+                if (currentMutes[i] !== targetMutes[i]) {
+                    currentMutes[i] = targetMutes[i]; needsUpdate = true;
+                    const meter = document.getElementById(`meter-${i}`); const muteBadge = document.getElementById(`mute-${i}`);
+                    if (meter && muteBadge) {
+                        if (currentMutes[i]) { meter.classList.add('is-muted'); muteBadge.classList.add('active'); }
+                        else { meter.classList.remove('is-muted'); muteBadge.classList.remove('active'); }
+                    }
+                }
+            }
+            if (needsUpdate) updateMixerUI(currentLevels, currentMutes);
+            requestAnimationFrame(renderLoop);
+        }
+        requestAnimationFrame(renderLoop);
+
+        function updateMixerUI(levels, mutes) {
+            levels.forEach((level, index) => {
+                const meter = document.getElementById(`meter-${index}`);
+                if (meter) {
+                    meter.style.clipPath = `inset(${100 - level.toFixed(1)}% 0 0 0)`;
+                }
+            });
+        }
+
+        function connectWebSocket(ip) {
+            if (ws) ws.close(); autoReconnect = true; 
+            statusText.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-[#facc15] animate-pulse"></span> Verbinde...`;
+            try {
+                ws = new WebSocket(`ws://${ip}:8765`);
+                ws.onopen = () => {
+                    clearTimeout(blackoutTimeout); clearTimeout(reconnectTimeout);
+                    blackoutScreen.classList.add('hidden');
+                    statusText.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-[#4ade80]"></span> Online`;
+                    toggleSetup(false);
+                };
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if(data.levels && data.mutes) { data.levels.forEach((val, i) => targetLevels[i] = val); data.mutes.forEach((val, i) => targetMutes[i] = val); }
+                        if(data.labels) { data.labels.forEach((lbl, i) => { const el = document.getElementById(`name-${i}`); if(el && el.textContent !== lbl) el.textContent = lbl; }); }
+                        if(data.master_label) { const el = document.getElementById('name-master'); if(el && el.textContent !== data.master_label) el.textContent = data.master_label; }
+                        if(data.media) updateMediaUI(data.media);
+                    } catch(e) {}
+                };
+                ws.onclose = () => {
+                    if(autoReconnect) {
+                        blackoutTimeout = setTimeout(() => { blackoutScreen.classList.remove('hidden'); targetLevels.fill(0); }, 2000);
+                        reconnectTimeout = setTimeout(() => connectWebSocket(ip), 1000);
+                    }
+                };
+            } catch(e) { console.log("Fehler"); }
+        }
+
+        document.getElementById('connect-btn').addEventListener('click', () => {
+            const ip = document.getElementById('ip-input').value.trim();
+            if(ip) { noSleep.enable(); connectWebSocket(ip); }
+        });
+
+        const currentHost = window.location.hostname;
+        if (currentHost && currentHost !== "") document.getElementById('ip-input').value = currentHost;
+    </script>
+</body>
+</html>
